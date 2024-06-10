@@ -1,0 +1,315 @@
+  
+# ApiRest Musica
+
+## Introducción
+
+## Configurando el entorno con Docker
+### Requerimientos
+
+Python
+selenium
+webdriver-manager
+fastapi
+uvicorn
+
+
+
+### Preparación del entorno Docker
+Configuraré un archivo `Dockerfile` para crear una imagen de Docker que contenga una aplicación web construida con `FastAPI`.  Esta aplicación también dependerá de un entorno web (Google Chrome y ChromeDriver) donde se realizarán tareas de `scraping` web. 
+Explicaré su configuración paso a paso.
+
+#### 1. Especificar la imagen base
+
+```dockerfile
+FROM python:3.8
+```
+
+Aquí utilizo la imagen oficial de `Python 3.8` como base. Esta imagen ya contiene una instalación de `Python 3.8` y herramientas comunes necesarias para ejecutar aplicaciones Python. 
+
+#### 2. Copiar los archivos del proyecto al contenedor
+
+```dockerfile
+COPY . /app
+```
+
+En la carpeta del proyecto tengo el archivo `requirements.txt` con las librerías de Python necesarias y el archivo `scrape_azlyrics.py` con el script de `scraping` . Con esta orden se copian todos los archivos del directorio actual en la máquina host al directorio `/app` dentro del contenedor Docker. Esto facilita posteriormente el uso de estos archivos gracias a la caché de Docker.
+
+#### 3. Establecer el directorio de trabajo
+
+```dockerfile
+WORKDIR /app
+```
+ Cambia el directorio de trabajo actual a `/app`. Esto simplifica las instrucciones posteriores, ya que los comandos se ejecutarán desde el directorio `/app`, donde está ubicado el código de la aplicación.
+
+#### 4. Instalar dependencias del sistema y entorno web
+
+```dockerfile
+RUN apt-get update && \
+    apt-get install -y wget unzip && \
+    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list' && \
+    apt-get -y update && \
+    apt-get -y install google-chrome-stable
+```
+
+Estas ordenes actualizan el índice de paquetes de `apt-get`, instala `wget` y `unzip`, agrega la clave de firma de Google para Chrome y su repositorio, y luego instala Google Chrome. `wget` y `unzip` son necesarios para descargar y descomprimir ChromeDriver. Y Google Chrome es esencial para las tareas de `scraping` que requieren un navegador.
+
+#### 5. Descargar e instalar ChromeDriver
+
+```dockerfile
+RUN wget -O /tmp/chromedriver.zip http://chromedriver.storage.googleapis.com/`curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE`/chromedriver_linux64.zip && \
+    unzip /tmp/chromedriver.zip -d /usr/local/bin/
+```
+
+Estas ordenes descargan la última versión de `ChromeDriver` y la descomprime en el directorio `/usr/local/bin/`. `ChromeDriver` es necesario para controlar el navegador Chrome programáticamente en las tareas de `scraping`.
+
+#### 6. Establecer la variable de entorno para la pantalla de visualización
+
+```dockerfile
+ENV DISPLAY=:99
+```
+
+Esta orden la variable de entorno `DISPLAY` para usar el display virtual número 99.Esta configuración es útil cuando se utiliza un servidor X virtual (Xvfb) para ejecutar Chrome en modo headless.
+
+#### 7. Instalar dependencias de Python
+
+```dockerfile
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+```
+
+Actualiza `pip` a la última versión e instala las dependencias de Python listadas en el archivo `requirements.txt`.
+Al mantener `pip` actualizado asegura que se tienen las últimas características y correcciones de seguridad. Las dependencias de `requirements.txt` son necesarias para que la aplicación funcione correctamente. 
+
+#### 8. Exponer el puerto para la aplicación FastAPI
+
+```dockerfile
+EXPOSE 8000
+```
+
+* Este es el puerto en el que la aplicación `FastAPI` estará sirviendo las solicitudes `HTTP`. Especificarlo permite mapear este puerto al host u otros servicios.
+
+#### 9. Comando para iniciar la aplicación FastAPI
+
+```dockerfile
+CMD ["uvicorn", "scrape_azlyrics:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Ejecuta `uvicorn`, el servidor ASGI, con el módulo `scrape_azlyrics` y la aplicación `app`, configurando para escuchar en todas las interfaces de red (`0.0.0.0`) y el puerto 8000.
+Este comando pone en marcha la aplicación FastAPI, haciéndola accesible en la red a través del puerto especificado.
+
+### Definición del Docker Compose
+
+A continuación definiremos el archivo `docker-compose.yml` .
+
+#### 1. Versión del archivo `docker-compose`
+
+```yaml
+version: '3.8'
+```
+
+**Explicación:** Especifica la versión del formato de archivo `docker-compose` a usar. La versión 3.8 es una versión moderna y estable que incluye características útiles para definir servicios, redes y volúmenes. 
+
+#### 2. Definición del servicio
+
+```yaml
+services:
+  scrape-azlyrics:
+```
+
+Esto definirá un servicio llamado `scrape-azlyrics`.Un servicio en Docker Compose representa un contenedor que se ejecutará según la configuración especificada. En este caso, se está configurando el contenedor que ejecutará la aplicación de scraping con FastAPI.
+
+#### 3. Construcción de la imagen
+
+```yaml
+build: .
+```
+
+Indica que Docker debe construir la imagen a partir del Dockerfile ubicado en el directorio actual (`.`). Esto permite que Docker Compose construya la imagen personalizada para la aplicación usando las instrucciones definidas en el Dockerfile del proyecto.
+
+#### 4. Mapeo de puertos
+
+```yaml
+ports:
+  - "8000:8000"
+```
+
+Mapea el puerto 8000 del contenedor al puerto 8000 del host.  Esto permite que la aplicación FastAPI sea accesible desde el host en el puerto 8000, facilitando el acceso a la API desde fuera del contenedor.
+
+#### 5. Montaje de volúmenes
+
+```yaml
+volumes:
+  - .:/app
+```
+
+Monta el directorio actual del host (`.`) en el directorio `/app` dentro del contenedor.
+Esto asegura que los cambios realizados en el código fuente en el host se reflejen inmediatamente en el contenedor, lo cual es muy útil para el desarrollo y pruebas en tiempo real sin necesidad de reconstruir la imagen cada vez que se realiza un cambio.
+
+#### 6. Permitir entrada estándar (stdin) abierta
+
+```yaml
+stdin_open: true
+```
+
+Mantiene la entrada estándar (stdin) abierta para el contenedor. Esta opción es útil para aplicaciones interactivas o si se necesita acceder al contenedor mediante una terminal interactiva para depuración o pruebas.
+
+#### 7. Habilitar terminal tty
+
+```yaml
+tty: true
+```
+
+Asigna una terminal tty al contenedor.Esto es útil para facilitar la interacción con el contenedor desde la línea de comandos, proporcionando una experiencia de terminal más completa. Esta configuración junto con `stdin_open` permite abrir una sesión interactiva en el contenedor.
+
+## Configurando el scraper web
+Claro, aquí tienes la explicación y justificación del código Python que has proporcionado. Este código define una API usando FastAPI para buscar canciones y obtener las letras de canciones desde el sitio web AZLyrics utilizando Selenium.
+
+### Explicación y Justificación
+
+#### 1. Importaciones necesarias
+
+```python
+import json
+from fastapi import FastAPI, HTTPException
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+```
+
+**Explicación:** Importa los módulos necesarios:
+- `json`: para manejar datos JSON.
+- `FastAPI` y `HTTPException` de `fastapi`: para crear la API y manejar excepciones.
+- `selenium.webdriver` y otros componentes de Selenium: para automatizar el navegador web.
+- `ChromeDriverManager` de `webdriver_manager.chrome`: para gestionar automáticamente la descarga e instalación de ChromeDriver.
+
+**Justificación:** Estas importaciones son esenciales para configurar y manejar la API, automatizar las búsquedas en la web y obtener los datos requeridos.
+
+#### 2. Inicialización de la aplicación FastAPI
+
+```python
+app = FastAPI()
+```
+
+**Explicación:** Crea una instancia de FastAPI.
+
+**Justificación:** Esto es necesario para definir los endpoints y manejar las solicitudes HTTP.
+
+#### 3. Función para extraer datos de las canciones
+
+```python
+def extract_song_data(elements):
+    results = {}
+    for element in elements:
+        try:
+            link = element.find_element(By.TAG_NAME, 'a')
+            title = link.find_element(By.TAG_NAME, 'b').text.replace("\\", "").replace("\"", "").replace('"',"")
+            song_url = link.get_attribute('href')
+            results[title] = song_url
+        except Exception:
+            pass
+    return results
+```
+
+**Explicación:** Esta función toma una lista de elementos de Selenium y extrae el título y el enlace de la canción, almacenándolos en un diccionario.
+
+**Justificación:** Facilita la organización y el acceso a los datos de las canciones encontradas.
+
+#### 4. Función para configurar el WebDriver
+
+```python
+def setup_driver():
+    service = Service(ChromeDriverManager().install())
+    options = webdriver.ChromeOptions()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    driver = webdriver.Chrome(service=service, options=options)
+    return driver
+```
+
+**Explicación:** Configura y retorna un WebDriver de Chrome con opciones para ejecutarse en modo headless (sin interfaz gráfica), evitando problemas de permisos y uso de memoria.
+
+**Justificación:** Garantiza que el WebDriver esté correctamente configurado y que pueda ejecutarse en entornos de producción sin interfaz gráfica.
+
+#### 5. Función para buscar canciones
+
+```python
+def search_songs(song_name, limit=None):
+    driver = setup_driver()
+    encoded_song_name = song_name.replace(" ", "%20")
+    url = f'https://search.azlyrics.com/search.php?q={encoded_song_name}&x=b4fee88ddde4d8d45c3697ef3f0406cd505798931d53a893636b15a9ef4e2d6a'
+    driver.get(url)
+    elements = driver.find_elements(By.CLASS_NAME, 'visitedlyr')
+    if limit:
+        elements = elements[:limit]
+    results = extract_song_data(elements)
+    driver.quit()
+    return results
+```
+
+**Explicación:** Realiza una búsqueda en AZLyrics con el nombre de la canción proporcionado, obtiene los resultados y retorna un diccionario con los títulos y URLs de las canciones.
+
+**Justificación:** Permite realizar búsquedas automatizadas de canciones y obtener resultados estructurados para su uso en la API.
+
+#### 6. Función para obtener la letra de una canción
+
+```python
+def get_lyrics_for_url(song_url):
+    if not song_url:
+        return None
+    driver = setup_driver()
+    driver.get(song_url)
+
+    lyrics_element = driver.find_element("xpath",'/html/body/div[2]/div[2]/div[2]/div[5]')
+    
+    lyrics = lyrics_element.text if lyrics_element else None
+    lyrics = lyrics.replace("\n", " ")
+    driver.quit()
+    return lyrics
+```
+
+**Explicación:** Toma la URL de una canción, extrae el texto de las letras y lo retorna.
+
+**Justificación:** Permite obtener y procesar las letras de canciones de manera automatizada.
+
+#### 7. Definición de los endpoints
+
+```python
+@app.get("/songs/{song_name}")
+def list_songs(song_name: str):
+    return search_songs(song_name)
+```
+
+**Explicación:** Define un endpoint para buscar y listar canciones basadas en el nombre proporcionado.
+
+**Justificación:** Proporciona un punto de acceso para que los usuarios puedan buscar canciones.
+
+```python
+@app.get("/song/{song_name}")
+def get_song(song_name: str):
+    return search_songs(song_name, limit=1)
+```
+
+**Explicación:** Define un endpoint para buscar una sola canción basada en el nombre proporcionado.
+
+**Justificación:** Permite obtener un resultado más específico, útil cuando se busca una canción en particular.
+
+```python
+@app.get("/getLyrics/{song_name}")
+def get_lyrics(song_name: str):
+    songs = search_songs(song_name, limit=1)
+    song_url = list(songs.values())[0]
+    return get_lyrics_for_url(song_url)
+```
+
+**Explicación:** Define un endpoint para obtener la letra de una canción basada en el nombre proporcionado.
+
+**Justificación:** Combina la búsqueda y la extracción de letras en un solo paso, facilitando el acceso a la información completa de la canción.
+
+### Conclusión
+
+Este código crea una API con FastAPI que permite buscar canciones y obtener sus letras desde AZLyrics usando Selenium para la automatización de las búsquedas. Las funciones están diseñadas para ser modulares y reutilizables, y la configuración del WebDriver asegura que pueda ejecutarse en entornos sin interfaz gráfica, lo cual es ideal para aplicaciones en contenedores o servidores.
+
+
